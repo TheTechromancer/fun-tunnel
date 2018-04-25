@@ -4,13 +4,13 @@
 
 <br>
 
-#### Features:
+### Features:
 * **NIC bridging over the internet** without a TUN/TAP interface
 * Use tools like Responder, etc. from the safety of your AWS instance as if you had physical network access
 * Single script acts as client or server
 * 100% vanilla Python (no external dependencies)
 
-#### Please be aware:
+### Please be aware:
 1. **This is a work in progress.** The current implementation tunnels traffic over a simple unencrypted TCP socket.
 2. Requires promiscuous mode (and therefore root access) on both server and client
 3. Untested on Windows - use Linux for best results (feel free to report issues)
@@ -22,7 +22,7 @@
 
 
 #### Help:
-~~~~
+~~~
 usage: FunTunnel.py [-h] [-c] [-i] [-p] [-v] [host]
 
 FunTunnel.py
@@ -36,6 +36,15 @@ optional arguments:
   -i , --interface   interface to bridge
   -p , --port        port on which to listen/connect (default: 8080)
   -v, --verbose      print what's happening
-~~~~
+~~~
 
-#### Simple usage:
+#### Simple example:
+Server:
+~~~
+$ ./FunTunnel.py
+~~~
+<br>
+Client:
+~~~
+# ./FunTunnel.py <server_ip>
+~~~
