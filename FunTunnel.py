@@ -435,10 +435,10 @@ if __name__ == '__main__':
 
 
     except argparse.ArgumentError:
-        stderr.write("\n[!] Check your syntax. Use -h for help.\n")
+        sys.stderr.write("\n[!] Check your syntax. Use -h for help.\n")
         exit(2)
     except AssertionError as e:
-        stderr.write("\n[!] {}\n".format(str(e)))
+        sys.stderr.write("\n[!] {}\n".format(str(e)))
         exit(1)
     except KeyboardInterrupt:
         sys.stderr.write("\n[!] Program interrupted.\n")
