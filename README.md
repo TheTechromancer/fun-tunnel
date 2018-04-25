@@ -51,5 +51,5 @@ $ ./FunTunnel.py
 
 **Client:**
 ~~~
-$ ./FunTunnel.py <server_ip>
+$ ./FunTunnel.py -c <server_ip>
 ~~~
