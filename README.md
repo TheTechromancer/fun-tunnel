@@ -46,5 +46,5 @@ $ ./FunTunnel.py
 <br>
 Client:
 ~~~
-# ./FunTunnel.py <server_ip>
+$ ./FunTunnel.py <server_ip>
 ~~~
