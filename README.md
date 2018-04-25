@@ -10,6 +10,8 @@
 * Single script acts as client or server
 * 100% vanilla Python (no external dependencies)
 
+<br>
+
 ### Please be aware:
 1. **This is a work in progress.** The current implementation tunnels traffic over a simple unencrypted TCP socket.
 2. Requires promiscuous mode (and therefore root access) on both server and client
@@ -20,8 +22,9 @@
 	* Multiple client support
 	* Simple shell for C2
 
+<br>
 
-#### Help:
+### Help:
 ~~~
 usage: FunTunnel.py [-h] [-c] [-i] [-p] [-v] [host]
 
@@ -38,13 +41,15 @@ optional arguments:
   -v, --verbose      print what's happening
 ~~~
 
-#### Simple example:
-Server:
+<br>
+
+### Simple example:
+**Server:**
 ~~~
 $ ./FunTunnel.py
 ~~~
-<br>
-Client:
+
+**Client:**
 ~~~
 $ ./FunTunnel.py <server_ip>
 ~~~
