@@ -2,7 +2,7 @@
 
 '''
 TODO:
- - experiment with layer-2 NAT (to circumvent port security)
+ - Windows support
  - experiment with STUN (to circumvent NAT)
  - try tunneling using websockets
 '''
@@ -10,7 +10,6 @@ TODO:
 import os
 import sys
 import queue
-import ctypes
 import pickle
 import socket
 import struct
@@ -52,9 +51,9 @@ class FunTunnel():
 
         self.ifc_name       = interface
 
-        self._tunnel        = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # tunnel connection
+        self._tunnel        = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._tunnel.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # enable socket reuse
-        self.peer           = None # tunnel connection (or client connection if in server mode)
+        self.peer           = None # socket representing tunnel to peer
 
         self.host           = host
         self.port           = port
@@ -63,9 +62,9 @@ class FunTunnel():
         self.net_listener   = threading.Thread(target=self._net_listener, daemon=True)
         self.tun_listener   = threading.Thread(target=self._tun_listener, daemon=True)
         self.tun_sender     = threading.Thread(target=self._tun_sender, daemon=True)
-        self.outgoing_queue = queue.Queue(100)
+        self.outgoing_queue = queue.Queue(100) # buffer 100 outgoing packets
 
-        self.mac_table      = []
+        self.mac_table      = [] # table which holds MACs on other side of tunnel
         self.verbose        = verbose
         self.buf_size       = buf_size
         self._stop          = False
@@ -76,7 +75,6 @@ class FunTunnel():
         self.verbose_print('[+] Starting sniffer on {}'.format(self.ifc_name))
         self.interface.up()
 
-        #try:
         if not (self.client_mode and self.host):
             self.verbose_print('[+] Starting tunnel in server mode\n[+] Listening on port {}'.format(self.port))
             print(self.host, self.port)
@@ -86,10 +84,6 @@ class FunTunnel():
         self.tun_sender.start()
         self.tun_listener.start()
         self.net_listener.start()
-
-        #except OSError as e:
-        #    stderr.write('[!] {}\n'.format(str(e)))
-        #    self.stop()
 
         while not self._stop:
             sleep(1)
@@ -117,34 +111,32 @@ class FunTunnel():
         self.verbose_print('[+] Starting tunnel listener')
 
         while not self._stop:
-            try:
-                if self.peer is not None:
-                    #self.verbose_print('[+] Reading from tunnel')
-                    #packet = self.peer.recv(self.buf_size)
+
+            if self.peer is not None:
+                try:
                     with self.peer.makefile(mode='rb') as p:
                         packet = pickle.load(p)
-                    self.proc_tun_incoming(packet)
-                else:
-                    self.verbose_print('[!] No tunnel yet')
-                    self._reset_tunnel()
-                    sleep(.1)
 
-            except:
-                if not self._stop:
-                    self._reset_tunnel()
-                else:
-                    break
+                except:
+                    if self._stop:
+                        break
+                    else:
+                        self.verbose_print('[!] Error receiving from tunnel')
+                        self._reset_tunnel()
+
+                self.proc_tun_incoming(packet)
+
+            else:
+                self.verbose_print('[!] No tunnel yet')
+                self._reset_tunnel()
+                sleep(.1)
 
 
     def _tun_sender(self):
 
         while not self._stop:
-            #try:
             packet = self.outgoing_queue.get()
-            self.proc_tun_outgoing(packet)
-            #except queue.Empty:
-            #    sleep(.1)
-            
+            self.proc_tun_outgoing(packet)            
 
 
     def proc_net_incoming(self, packet):
@@ -152,7 +144,7 @@ class FunTunnel():
         process packets sniffed off the wire
         '''
 
-        # src and dest MACs
+        # source and destination MAC addresses
         src,dst = packet[6:12],packet[:6]
 
         if self.verbose:
@@ -171,16 +163,12 @@ class FunTunnel():
             # send it across the tunnel
             try:
                 self.outgoing_queue.put(packet)
-            except queue.Empty:
+            except queue.Full:
                 self.verbose_print('[!] Outgoing queue is full. Dropping packet.')
                 sleep(.1)
             
-
         else:
             self.verbose_print('')
-
-        #self.verbose_print('is multicast/broadcast: {}'.format(is_multicast))
-        #self.verbose_print(self.mac_table)
 
 
     def proc_tun_incoming(self, packet):
@@ -193,27 +181,16 @@ class FunTunnel():
             the Ethernet protocol number to be received. For example:
             ("eth0",0x1234).  Optional 3rd,4th,5th elements in the tuple
             specify packet-type and ha-type/addr.
-
-
         '''
 
-        #self.verbose_print('[+] Received packet (size {})'.format(len(packet)))
-
-        src_mac = packet[6:12]
+        src= packet[6:12]
 
         # add source MAC to table
-        if not src_mac in self.mac_table:
-            self.verbose_print('[+] Adding new MAC {}'.format(':'.join('{:02X}'.format(i) for i in src_mac)))
-            self.mac_table.append(src_mac)
-
-        #print(packet, flush=True)
-        #self.verbose_print('[+] Sending {} bytes'.format(len(packet)))
+        if not src in self.mac_table:
+            self.verbose_print('[+] Adding new MAC {}'.format(':'.join('{:02X}'.format(i) for i in src)))
+            self.mac_table.append(src)
 
         self.interface.write(packet)
-        # this works too
-        # eth_type = int.from_bytes(packet[12:14], 'big')
-        # self.sender.sendto(packet, (self.interface, eth_type))
-
 
 
     def proc_tun_outgoing(self, packet):
@@ -271,7 +248,7 @@ class FunTunnel():
                 self.peer,address = self._tunnel.accept()
                 print('\n[+] Connection from {}\n'.format(address[0]))
 
-        except:
+        except OSError:
             self._stop = True
             self.err_print('Error setting up tunnel')
 
@@ -283,7 +260,7 @@ class FunTunnel():
 
 class TAPDevice:
 
-    def __init__(self, name='tap0', addr=None):
+    def __init__(self, name='funtun0', addr=None):
 
         self.name = name
         self.addr = addr
@@ -317,10 +294,9 @@ class TAPDevice:
         IFF_TAP         = 0x0002     # TAP interface
         IFF_NO_PI       = 0x1000     # don't return packet details
 
-        make_if_req = struct.pack('16sH', self.name.encode('ascii'), IFF_TAP | IFF_NO_PI)
+        ifr = struct.pack('16sH', self.name.encode('ascii'), IFF_TAP | IFF_NO_PI)
         fid = os.open('/dev/net/tun', os.O_RDWR)
-        print(fid, TUNSETIFF, make_if_req)
-        ioctl(fid, TUNSETIFF, make_if_req)
+        ioctl(fid, TUNSETIFF, ifr)
         return fid
 
 
@@ -345,11 +321,6 @@ class TAPDevice:
 
 # most of this code is shamelessly borrowed from zeigotaro's "python-sniffer"
 # https://github.com/zeigotaro/python-sniffer/blob/master/snifferCore.py
-
-# ifreq struct
-class ifreq(ctypes.Structure):
-    _fields_ = [("ifr_ifrn", ctypes.c_char * 16),
-                ("ifr_flags", ctypes.c_short)]
 
 
 class SniffDevice(): 
@@ -380,7 +351,7 @@ class SniffDevice():
             # htons: converts 16-bit positive integers from host to network byte order
             self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
             # 25 = IN.SO_BINDTODEVICE (from /usr/include/netinet/in.h)
-            self.socket.setsockopt(socket.SOL_SOCKET, 25, interface[:15].encode('utf-8') + b'\x00')
+            self.socket.setsockopt(socket.SOL_SOCKET, 25, interface[:15].encode('ascii') + b'\x00')
 
             # create additional socket for sending
             #self.sender = self.socket.dup()
@@ -407,14 +378,13 @@ class SniffDevice():
 
                 #self.sender.bind((self.interface, socket.htons(FLAGS.ETH_P_ALL)))
                 self.sender.bind((self.interface, 0))
-
+                
                 # enable promiscuous mode
-                import fcntl # posix-only
-                ifr = ifreq()
-                ifr.ifr_ifrn = self.interface.encode('utf-8')[:15] + b'\x00'
-                fcntl.ioctl(self.socket, FLAGS.SIOCGIFFLAGS, ifr) # get the flags
-                ifr.ifr_flags |= FLAGS.IFF_PROMISC # add the promiscuous flag
-                fcntl.ioctl(self.socket, FLAGS.SIOCSIFFLAGS, ifr) # update
+                ifc = self.interface.encode('ascii')
+                ifr = bytearray(struct.pack('16sH', ifc, 0)) # create the struct
+                ioctl(self.socket, FLAGS.SIOCGIFFLAGS, ifr) # get the flags
+                ifr = bytearray(struct.pack('16sH', ifc, struct.unpack('16sH', ifr)[1] | FLAGS.IFF_PROMISC)) # add the promiscuous flag
+                ioctl(self.socket, FLAGS.SIOCSIFFLAGS, ifr) # update
                 self.ifr = ifr
 
             else:
@@ -471,9 +441,9 @@ class SniffDevice():
 
         # disable promiscuous mode
         if os.name == 'posix':
-            import fcntl
-            self.ifr.ifr_flags ^= FLAGS.IFF_PROMISC # mask it off (remove)
-            fcntl.ioctl(self.socket, FLAGS.SIOCSIFFLAGS, self.ifr) # update
+            ifc,flags = struct.unpack('16sH', self.ifr) ^ FLAGS.IFF_PROMISC # mask it off (remove)
+            self.ifr = bytearray(struct.pack('16sH', ifc, flags))
+            ioctl(self.socket, FLAGS.SIOCSIFFLAGS, self.ifr) # update
 
         else:
             self.qlockioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
