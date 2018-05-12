@@ -1,12 +1,10 @@
 # FunTunnel.py
 ### Tunnel layer 2 traffic over TCP with a single Python script
-#### "im in ur network sniffin ur packetz"
 
 <br>
 
 ### Features:
 * **NIC bridging over the internet** without a TUN/TAP interface
-* Use tools like Responder, etc. from the safety of your AWS instance as if you had physical network access
 * Single script acts as client or server
 * 100% vanilla Python (no external dependencies)
 
@@ -17,10 +15,14 @@
 2. Requires promiscuous mode (and therefore root access) on both server and client
 3. Untested on Windows - use Linux for best results (feel free to report issues)
 4. Future developments may include:
-	* Tunnelling over well-formed HTTP similar to TrevorC2
+	* Tunnelling over well-formed HTTP / WebSockets
+  * Option to create virtual interface on the server side
 	* End-to-end encryption
 	* Multiple client support
-	* Simple shell for C2
+
+### Current bugs:
+* Endpoints running the script may be unable to communicate with the bridged network.  Traffic flows normally to other hosts in the broadcast domain, however.  I recommend using a VM bridged to the affected adapter as a workaround.
+* The server's network interface may get a DHCP address from the bridged network.  (This is more of a feature than a bug)  I recommend setting a static IP address to prevent losing your internet connection.
 
 <br>
 
