@@ -13,11 +13,10 @@
 
 ### Please be aware:
 1. **This is a work in progress.** The current implementation tunnels traffic over a simple unencrypted TCP socket.
-2. Requires promiscuous mode (and therefore root access) on both server and client
+2. Requires root access on both server and client
 3. Untested on Windows - use Linux for best results (feel free to report issues)
 4. Future developments may include:
 	* Tunnelling over well-formed HTTP / WebSockets
-	* Option to create virtual interface on the server side
 	* End-to-end encryption
 	* Multiple client support
 
