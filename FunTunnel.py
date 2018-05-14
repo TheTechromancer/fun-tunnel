@@ -103,6 +103,8 @@ class FunTunnel():
 
         while not self._stop:
             packet = self.interface.read()
+            print(len(packet))
+            print(packet[:100])
             self.proc_net_incoming(packet)
 
 
@@ -117,7 +119,7 @@ class FunTunnel():
                     with self.peer.makefile(mode='rb') as p:
                         packet = pickle.load(p)
 
-                except:
+                except IndexError:
                     if self._stop:
                         break
                     else:
@@ -248,9 +250,9 @@ class FunTunnel():
                 self.peer,address = self._tunnel.accept()
                 print('\n[+] Connection from {}\n'.format(address[0]))
 
-        except OSError:
+        except OSError as e:
             self._stop = True
-            self.err_print('Error setting up tunnel')
+            self.err_print('Error setting up tunnel:\n{}'.format(str(e)))
 
 
 
@@ -260,7 +262,7 @@ class FunTunnel():
 
 class TAPDevice:
 
-    def __init__(self, name='funtun0', addr=None):
+    def __init__(self, name='fun0', addr=None):
 
         self.name = name
         self.addr = addr
@@ -342,7 +344,6 @@ class SniffDevice():
     def __init__(self, interface=None):
 
         self.interface  = interface
-        self.sender     = None # separate socket for sending
         self.started    = False
 
         if os.name == 'posix':
@@ -350,21 +351,11 @@ class SniffDevice():
 
             # htons: converts 16-bit positive integers from host to network byte order
             self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
-            # 25 = IN.SO_BINDTODEVICE (from /usr/include/netinet/in.h)
-            self.socket.setsockopt(socket.SOL_SOCKET, 25, interface[:15].encode('ascii') + b'\x00')
-
-            # create additional socket for sending
-            #self.sender = self.socket.dup()
-            self.sender = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
-            #self.sender.setsockopt(socket.SOL_SOCKET, 25, interface[:15].encode('utf-8') + b'\x00')
 
         else:
             # create a raw socket and bind it to the public interface
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
-
-            # create additional socket for sending
-            #self.sender = self.socket.dup()
-            self.sender = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+            #self.socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
 
 
     def up(self):
@@ -376,8 +367,7 @@ class SniffDevice():
 
             if os.name == 'posix':
 
-                #self.sender.bind((self.interface, socket.htons(FLAGS.ETH_P_ALL)))
-                self.sender.bind((self.interface, 0))
+                self.socket.bind((self.interface, 0))
                 
                 # enable promiscuous mode
                 ifc = self.interface.encode('ascii')
@@ -391,7 +381,7 @@ class SniffDevice():
                 # the public network interface
                 HOST = socket.gethostbyname(socket.gethostname())
 
-                self.sender.bind((HOST, 0))
+                self.socket.bind((HOST, 0))
                 #self.socket.bind((HOST, 0))
 
                 # include IP headers
@@ -403,14 +393,18 @@ class SniffDevice():
             self.started = True
 
 
-    def read(self):
+    def read(self, buf=2048):
 
-        return self.socket.recv(2048)
+        if os.name == 'posix':
+            return self.socket.recv(buf)
+        else:
+            #return self.socket.recvfrom(buf)[0]
+            return self.socket.recv(buf)
 
 
     def write(self, data):
 
-        self.sender.send(data)
+        self.socket.send(data)
 
 
     def down(self):
@@ -446,11 +440,9 @@ class SniffDevice():
             ioctl(self.socket, FLAGS.SIOCSIFFLAGS, self.ifr) # update
 
         else:
-            self.qlockioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
+            self.socket.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
 
         self.socket.close()
-        if self.sender is not None:
-            self.sender.close()
         self.started = False
 
 
