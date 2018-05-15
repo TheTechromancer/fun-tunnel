@@ -2,12 +2,13 @@
 
 '''
 TODO:
- - Windows support
+ - Windows support (needs third-party driver for L2 headers - possibly either TAP or PCAP)
  - experiment with STUN (to circumvent NAT)
  - try tunneling using websockets
 '''
 
 import os
+import ssl
 import sys
 import queue
 import pickle
@@ -16,11 +17,14 @@ import struct
 import argparse
 import threading
 from time import sleep
+from base64 import b64decode
+from tempfile import NamedTemporaryFile
 from subprocess import run, PIPE, CalledProcessError
 
 if os.name == 'posix':
     from fcntl import ioctl
 
+ssl_cert = 'LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBN0RRNEV6UGpqWm5JV1lsa0Npb25BMTBEeFdWOUlibk43bzNuRndBK2JlUXZkQzhsCnY5V0o1OVg0WXIrWFhwc0w5SWZXSUdCMVZHbGRUS2ZtSzUwTmVDNU5SUEQ4QUNTUmhQK0ZpL3E3dEswUXR4L1UKc1l6OG9TQStIUmVkNFJMaGNzK1IzMEc2ZTJySGVBaE8yYnZiVW9MOHozb1d4emRWZlRUOHlCZkw4OWpoU1VUZwpqemR3NGUyWlFBT0phbEdIZTJPUitYWk1EZEgxOHpLNktFSW4vM1o2RU9TeFBiQUI5NHUxYTF5eVlrMlRWbXBnCnRsT1NXV1BtcUJja2cwQU5raHFpYStxMGE1emx0VXdUZzZyRDRReGxPamZHQy9GVmtLUVJqTFVaM3BEUDFJM1YKT3BVYXcyUGVvYXRDZGk2ZWpoSVFjVk5lYmFGUEVpOGZLWnBoOVFJREFRQUJBb0lCQVFDc0c2eVVTV1hRUXJLYQpreUtpeVc0ZDVFT2dMTUFOdC81V2lXMU45QzZKRWhDRnZ1anBxK1hOV0xxZzhXdVJVclpXV2pmcTVYMzRvTUdMCjNuYzNaanR2UzRXZjYxd2ptb0d5QUNIR0NrK0ZhZWxaRmNkOEMvZjBTN01XcmFPcllYK0drYnAvaTd3ZXU0SlcKY3U5SmRibHNtT2N2SW8zQVlSQllxQ2hjZ0FKclRVRVZzUnlpWG5nZjZrQXFIWCtESFVlRzRQZXl4SnFaWVZ2UQpISE1JeHVGdG9pVHNpMHRkZ21vemJIS1E2eWpUSGpXMElDMnl3S1UyMEN0dm1ZaGxQRERJejV6WlJ5YlVzNEtYCk5qY3JKVXcxKzQ1c09pTlBLdCt3Y1FwTndIWWFxZzF0THk1YmsvM2FuMXJvN2ZFV3NnR1dvM3lOMmI5N2swYjgKR21QSEw3NkJBb0dCQVBkeDgrWHM5S0tJdzlRSWRmYmNMb0lXM1owSDJWZEtxOTlsNURoTm9vckh4c3U5ZW1aRwoxazJUVk1pUTVnTVdjQmVOQWVLM081TkxQQTlMT1FsaTJ4TWcwTkt1d05MbU80V3hVMW1QeHYwbGtWVU9LUlhNCkRGU2Nobm9WbXkzZVN6WC9aOEJqNDNVcVhWZ3VTcXoyMEMzSEpxSW9TZnpFdXNPUS8rajFITkFoQW9HQkFQUmUKeG1YRGpUMWhzTHlKSklXYTloTzR1QjhIUjhPRnQ5M1dGeWtMTmNBK05ua1NkMndWeDFzVVUvaUJqSUtycWlTWgpyamVkQWkxem0rWUNrWVVYZTBDNEJLYnVvN2ZObWRHUkQ3SWxMNjljMHY4RXNHdFAxNkVHQ2VHRVNQYjRCVVQyCmJuTnU4VExBdWpMdEVNcTlJRTVUQllLNWhKRjZPVzFYa01xMXpHZFZBb0dBU3RrOVhaOS9vR3FlVWRUOVdkN2cKY3BsWUQ5Zi85bGV3QmJOY2hXdDJiMlJlemVKUzAvMDVkZDNMRjZBODgxSW1OZm1CU0lNRWtsbC9vV0N2c0JjbgpEWEl2dUlzRDZNZWIyYVQ2QVcxc1U4YTVYM0VaSEc3TWpBdU00Z0VISDZqT04xYzZtd2VjRmlUcWQzSUpSS2lqCjhEVDlpcStGTWVDUVhmZk9jVGt6cmdFQ2dZQU42SDcrTjcwSUsxRTF5ZEJzVWorREs5WSszZGsxeFp5TFlhMzcKeGdtUElYdFVOTHJiU2ZvSXN3VjhkVk1iOU0xQVBBYndYMTFLWFBRWWlUampERTBWaCtPcjVKVW8xdWpVUnA5UQpFbEcrZDFnQzc2OWl6QzZIbWFKaVZYY1pwMUFWZHJrZWxNZmhqWnFMWDNhL016aHRmTWdwZ29tTEJodlNuMU04ClZsQ0Y2UUtCZ1FDb0VrYVJFNDdnQUozRjh4OWJDeGhva2NBOHFsbFJFcXVLYmNoUGxhcGdSMDkvWDI2Z0RyTEMKenpMU0lOYjArajVtYVZjazhZZWNPbDk2VnNEWU9ySGFaMkhWV01JazQzQUZldjl2Nzk5clRiYlZ4U0RsbnNIZwozZGdSTEs3em9tMm9LcGZiQklvMTRQZ0lKVGswV2dmWDdydU5UL2lUalhzVkl3QVBrUGY1K3c9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQotLS0tLUJFR0lOIENFUlRJRklDQVRFLS0tLS0KTUlJRE1EQ0NBaGdDQ1FDeUZ6UkMwNFZyNGpBTkJna3Foa2lHOXcwQkFRc0ZBREJaTVFzd0NRWURWUVFHRXdKRwpWREVUTUJFR0ExVUVDQXdLVTI5dFpTMVRkR0YwWlRFaE1COEdBMVVFQ2d3WVNXNTBaWEp1WlhRZ1YybGtaMmwwCmN5QlFkSGtnVEhSa01SSXdFQVlEVlFRRERBbEdkVzVVZFc1dVpXd3dJQmNOTVRnd05URTFNRE15TkRBNFdoZ1AKTkRjMU5qQTBNVEF3TXpJME1EaGFNRmt4Q3pBSkJnTlZCQVlUQWtaVU1STXdFUVlEVlFRSURBcFRiMjFsTFZOMApZWFJsTVNFd0h3WURWUVFLREJoSmJuUmxjbTVsZENCWGFXUm5hWFJ6SUZCMGVTQk1kR1F4RWpBUUJnTlZCQU1NCkNVWjFibFIxYm01bGJEQ0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQU93ME9CTXoKNDQyWnlGbUpaQW9xSndOZEE4VmxmU0c1emU2TjV4Y0FQbTNrTDNRdkpiL1ZpZWZWK0dLL2wxNmJDL1NIMWlCZwpkVlJwWFV5bjVpdWREWGd1VFVUdy9BQWtrWVQvaFl2NnU3U3RFTGNmMUxHTS9LRWdQaDBYbmVFUzRYTFBrZDlCCnVudHF4M2dJVHRtNzIxS0MvTTk2RnNjM1ZYMDAvTWdYeS9QWTRVbEU0STgzY09IdG1VQURpV3BSaDN0amtmbDIKVEEzUjlmTXl1aWhDSi85MmVoRGtzVDJ3QWZlTHRXdGNzbUpOazFacVlMWlRrbGxqNXFnWEpJTkFEWklhb212cQp0R3VjNWJWTUU0T3F3K0VNWlRvM3hndnhWWkNrRVl5MUdkNlF6OVNOMVRxVkdzTmozcUdyUW5ZdW5vNFNFSEZUClhtMmhUeEl2SHltYVlmVUNBd0VBQVRBTkJna3Foa2lHOXcwQkFRc0ZBQU9DQVFFQUFZc2paekNRbURQMTdOUC8KeEZROW9Va05KejZJS2V3S0U4Y1FMRTlBcGt1ZlRWQVhhRkEyVXFGN0wwVnpVUmhNS1JBMVBVODE3NUp0b3VSbApJeURJSVZVSFpOc25tZGhCKzJhNVV2cFpxZEZkNG8yR2JBRkhZd0dTbmhicmRHL3l1Rm1IZXFRcVVtaitOZFkwCkd6S1dYYlBPRHdGQVhYZk1pcW1Zb2FTN1VkZXlHNklKdFlRbitjanVWYXhQcEhyWXQxUGpZb1QvemFaWmFHVnkKOE9tSTc3c2RCWDZTclRlZWora0h1eTg1bzlCL044WDVkTHdhcDJNS0ozZEE3NG1jM1o5QlA3N0I0Y0dCQ1VFQgprbmV3Y1FwUmNncjF6VUloZ1BmRHE2NkkxQTFUZmJMZjBLVEEzazhYZXZwd1pCUjNqbWJmcEhCamFrQzdzUll1CkI0a2tUUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K'
 
 # various flags
 class FLAGS():
@@ -42,32 +46,54 @@ class FLAGS():
 
 class FunTunnel():
 
-    def __init__(self, interface=None, host=None, port=80, client_mode=False, verbose=False, buf_size=2000):
+    def __init__(self, interface=None, host=None, port=80, client_mode=False, use_ssl=True, verbose=False, buf_size=65536):
 
+        # create a virtual interface on server only
         if client_mode:
-            self.interface  = SniffDevice(interface)
+            self.interface      = SniffDevice(interface)
         else:
-            self.interface  = TAPDevice()
+            self.interface      = TAPDevice()
 
-        self.ifc_name       = interface
+        self.ifc_name           = interface
 
-        self._tunnel        = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._tunnel.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # enable socket reuse
-        self.peer           = None # socket representing tunnel to peer
+        # plaintext tunnel socket
+        self._tcp_session       = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._tcp_session.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # enable socket reuse
+        self.peer               = None # socket representing tunnel to peer
 
-        self.host           = host
-        self.port           = port
+        self.host               = host
+        self.port               = port
+
+        # set up SSL
+        # basic obfuscation of traffic - nothing more
+        if use_ssl:
+            with NamedTemporaryFile(mode='wb') as f:
+                f.write(b64decode(ssl_cert))
+                f.flush()
+                
+
+                if client_mode:
+                    #self.ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                    self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+                    self._tunnel     = self.ssl_context.wrap_socket(self._tcp_session, server_hostname='FunTunnel')
+                else:
+                    self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                    self.ssl_context.load_cert_chain(certfile=f.name)
+                    self._tunnel     = self.ssl_context.wrap_socket(self._tcp_session, server_side=True)
+        else:
+            self._tunnel = self._tcp_session
+
        
-        self.client_mode    = client_mode # true or false
-        self.net_listener   = threading.Thread(target=self._net_listener, daemon=True)
-        self.tun_listener   = threading.Thread(target=self._tun_listener, daemon=True)
-        self.tun_sender     = threading.Thread(target=self._tun_sender, daemon=True)
-        self.outgoing_queue = queue.Queue(100) # buffer 100 outgoing packets
+        self.net_listener       = threading.Thread(target=self._net_listener, daemon=True)
+        self.tun_listener       = threading.Thread(target=self._tun_listener, daemon=True)
+        self.tun_sender         = threading.Thread(target=self._tun_sender, daemon=True)
+        self.outgoing_queue     = queue.Queue(100) # buffer 100 outgoing packets
 
-        self.mac_table      = [] # table which holds MACs on other side of tunnel
-        self.verbose        = verbose
-        self.buf_size       = buf_size
-        self._stop          = False
+        self.mac_table          = [] # table which contains MACs from other side of tunnel
+        self.verbose            = verbose
+        self.buf_size           = buf_size
+        self.client_mode        = client_mode # true or false
+        self._stop              = False
 
 
     def start(self):
@@ -103,8 +129,6 @@ class FunTunnel():
 
         while not self._stop:
             packet = self.interface.read()
-            print(len(packet))
-            print(packet[:100])
             self.proc_net_incoming(packet)
 
 
@@ -118,15 +142,14 @@ class FunTunnel():
                 try:
                     with self.peer.makefile(mode='rb') as p:
                         packet = pickle.load(p)
+                    self.proc_tun_incoming(packet)
 
-                except IndexError:
+                except:
                     if self._stop:
                         break
                     else:
                         self.verbose_print('[!] Error receiving from tunnel')
                         self._reset_tunnel()
-
-                self.proc_tun_incoming(packet)
 
             else:
                 self.verbose_print('[!] No tunnel yet')
@@ -197,30 +220,16 @@ class FunTunnel():
 
     def proc_tun_outgoing(self, packet):
         '''
-        sends a packet out the tunnel
+        sends a packet across the tunnel
         '''
 
         try:
             if self.peer is not None:
-                #self.peer.send(packet)
                 with self.peer.makefile(mode='wb') as p:
                     pickle.dump(packet, p)
-                #self.verbose_print('[+] Packet (size {}) sent'.format(len(packet)))
+
         except BrokenPipeError:
             self._reset_tunnel()
-            
-
-        '''
-        while not done:
-            with self.llock:
-                for c in range(len(self.clients)):
-                    try:
-                        c.send(packet)
-                    except OSError:
-                        self.client.remove(c)
-                        break
-                done = True
-        '''
 
 
     def verbose_print(self, *args, **kwargs):
@@ -250,7 +259,7 @@ class FunTunnel():
                 self.peer,address = self._tunnel.accept()
                 print('\n[+] Connection from {}\n'.format(address[0]))
 
-        except OSError as e:
+        except (OSError,ValueError) as e:
             self._stop = True
             self.err_print('Error setting up tunnel:\n{}'.format(str(e)))
 
@@ -393,13 +402,13 @@ class SniffDevice():
             self.started = True
 
 
-    def read(self, buf=2048):
+    def read(self, buf_size=65536):
 
         if os.name == 'posix':
-            return self.socket.recv(buf)
+            return self.socket.recv(buf_size)
         else:
             #return self.socket.recvfrom(buf)[0]
-            return self.socket.recv(buf)
+            return self.socket.recv(buf_size)
 
 
     def write(self, data):
@@ -412,12 +421,12 @@ class SniffDevice():
         self.__exit__()
 
 
-    def packet_stream(self, buf=65536):
+    def packet_stream(self, buf_size=65536):
 
         self.up()
 
         while 1:
-            yield self.socket.recv(self.buf)
+            yield self.socket.recv(buf_size)
     
 
     def __enter__(self):
