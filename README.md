@@ -12,16 +12,12 @@
 <br>
 
 ### Please be aware:
-1. **This is a work in progress.** The current implementation tunnels traffic over a simple unencrypted TCP socket.
+1. **This is a work in progress.** Traffic is obfuscated using an SSL self-signed cert.
 2. Requires root access on both server and client
-3. Untested on Windows - use Linux for best results (feel free to report issues)
+3. Tested in Linux only.  Bug reports and/or pull requests are welcome.
 4. Future developments may include:
 	* Tunnelling over well-formed HTTP / WebSockets
-	* End-to-end encryption
 	* Multiple client support
-
-### Current bugs:
-* The client endpoint is unable to communicate over the tunnel, although its network is fully reachable.
 
 <br>
 
