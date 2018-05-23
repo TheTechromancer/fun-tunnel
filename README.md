@@ -17,25 +17,23 @@
 3. Tested in Linux only.  Bug reports and/or pull requests are welcome.
 4. Future developments may include:
 	* Tunnelling over well-formed HTTP / WebSockets
-	* Multiple client support
 
 <br>
 
 ### Help:
 ~~~
-usage: FunTunnel.py [-h] [-c] [-i] [-p] [-v] [host]
+usage: FunTunnel.py [-h] [-i] [-p] [-v] [host]
 
-FunTunnel.py
+im in ur network sniffin ur packetz
 
 positional arguments:
-	host               connect to IP (client mode) or bind to IP (server mode)
+  host               connect to host (client mode)
 
 optional arguments:
-	-h, --help         show this help message and exit
-	-c, --client       client mode (default: server)
-	-i , --interface   interface to bridge
-	-p , --port        port on which to listen/connect (default: 8080)
-	-v, --verbose      print what's happening
+  -h, --help         show this help message and exit
+  -i , --interface   interface to bridge (default: enp5s0)
+  -p , --port        port number on which to listen/connect (default: 8080)
+  -v, --verbose      print detailed information
 ~~~
 
 <br>
@@ -48,5 +46,5 @@ $ ./FunTunnel.py
 
 **Client:**
 ~~~
-$ ./FunTunnel.py -c <server_ip>
+$ ./FunTunnel.py <server_ip>
 ~~~
