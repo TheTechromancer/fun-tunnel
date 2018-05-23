@@ -3,6 +3,7 @@
 '''
 TODO:
  - Windows support (needs third-party driver for L2 headers - possibly either TAP or PCAP)
+     - experiment with L2 NAT (change MAC table to ARP table, strip off L2 header client-side)
  - experiment with STUN (to circumvent NAT)
  - try tunneling using websockets
 '''
@@ -14,6 +15,7 @@ import queue
 import pickle
 import socket
 import struct
+import logging
 import argparse
 import threading
 from time import sleep
@@ -44,124 +46,111 @@ class FLAGS():
 
 ### MAIN CLASS ###
 
-class FunTunnel():
+class FunTunnel(threading.Thread):
+    '''
+    Base FunTunnel class
 
-    def __init__(self, interface=None, host=None, port=80, client_mode=False, use_ssl=True, verbose=False, buf_size=65536):
+    connection argument
 
-        # create a virtual interface on server only
-        if client_mode:
-            self.interface      = SniffDevice(interface)
+    '''
+
+    def __init__(self, peer, interface, create_ifc=True, daemon=False):
+
+        super().__init__(daemon=daemon)
+
+        assert peer and interface, "Please specify connection socket and interface"
+
+        self.peer               = peer # socket representing tunnel to peer
+
+        # create a virtual interface if requested
+        if create_ifc:
+            self.bridge_ifc     = TAPDevice(interface)
+            self.tap            = interface
         else:
-            self.interface      = TAPDevice()
+            self.bridge_ifc     = SniffDevice(interface)
+            self.tap            = None
 
-        self.ifc_name           = interface
-
-        # plaintext tunnel socket
-        self._tcp_session       = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._tcp_session.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # enable socket reuse
-        self.peer               = None # socket representing tunnel to peer
-
-        self.host               = host
-        self.port               = port
-
-        # set up SSL
-        # basic obfuscation of traffic - nothing more
-        if use_ssl:
-            with NamedTemporaryFile(mode='wb') as f:
-                f.write(b64decode(ssl_cert))
-                f.flush()
-                
-
-                if client_mode:
-                    #self.ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                    self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
-                    self._tunnel     = self.ssl_context.wrap_socket(self._tcp_session, server_hostname='FunTunnel')
-                else:
-                    self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-                    self.ssl_context.load_cert_chain(certfile=f.name)
-                    self._tunnel     = self.ssl_context.wrap_socket(self._tcp_session, server_side=True)
-        else:
-            self._tunnel = self._tcp_session
-
-       
         self.net_listener       = threading.Thread(target=self._net_listener, daemon=True)
-        self.tun_listener       = threading.Thread(target=self._tun_listener, daemon=True)
+        self.tun_listener       = threading.Thread(target=self._tun_listener)#, daemon=True)
         self.tun_sender         = threading.Thread(target=self._tun_sender, daemon=True)
         self.outgoing_queue     = queue.Queue(100) # buffer 100 outgoing packets
 
-        self.mac_table          = [] # table which contains MACs from other side of tunnel
-        self.verbose            = verbose
-        self.buf_size           = buf_size
-        self.client_mode        = client_mode # true or false
-        self._stop              = False
+        self.mac_table          = [] # table which contains MACs on other side of tunnel
+        self.STOP               = False
+        self.STOPPED            = False
 
 
-    def start(self):
+    def run(self):
 
-        self.verbose_print('[+] Starting sniffer on {}'.format(self.ifc_name))
-        self.interface.up()
-
-        if not (self.client_mode and self.host):
-            self.verbose_print('[+] Starting tunnel in server mode\n[+] Listening on port {}'.format(self.port))
-            print(self.host, self.port)
-            self._tunnel.bind((self.host, self.port))
-            self._tunnel.listen(0)
+        logging.info('[+] Initializing bridge interface {}'.format(str(self.bridge_ifc)))
+        self.bridge_ifc.up()
 
         self.tun_sender.start()
         self.tun_listener.start()
         self.net_listener.start()
+        self.tun_listener.join()
 
-        while not self._stop:
-            sleep(1)
+        logging.info('[*] Reached end of FunTunnel')
 
 
     def stop(self):
 
-        self._stop = True
-        self.peer.shutdown()
-        self.peer.close()
-        if not self.client_mode:
-            self._tunnel.shutdown(socket.SHUT_RDWR)
-        self.sniffer.stop()
+        if not self.STOPPED:
+
+            logging.info('[+] Stopping funtunnel')
+
+            try:
+                self.STOP = True
+                self.bridge_ifc.down()
+                self.peer.shutdown(socket.SHUT_RDWR)
+                self.peer.close()
+            except:
+                pass
+            finally:
+                self.STOPPED = True
 
 
     def _net_listener(self):
 
-        while not self._stop:
-            packet = self.interface.read()
-            self.proc_net_incoming(packet)
+        while not self.STOP:
+            try:
+                packet = self.bridge_ifc.read()
+                self.proc_net_incoming(packet)
+            except OSError:
+                self.stop()
+
+        logging.debug('[*] Stopped net_listener')
 
 
     def _tun_listener(self):
 
-        self.verbose_print('[+] Starting tunnel listener')
+        logging.debug('[+] Starting tun_listener')
 
-        while not self._stop:
+        while not self.STOP:
 
-            if self.peer is not None:
-                try:
-                    with self.peer.makefile(mode='rb') as p:
-                        packet = pickle.load(p)
-                    self.proc_tun_incoming(packet)
+            try:
+                with self.peer.makefile(mode='rb') as p:
+                    packet = pickle.load(p)
+            except Exception as e:
+                logging.info('[!] Error receiving from tunnel:\n\t{}'.format(str(e)))
+                self.stop()
+                break
+            self.proc_tun_incoming(packet)
 
-                except:
-                    if self._stop:
-                        break
-                    else:
-                        self.verbose_print('[!] Error receiving from tunnel')
-                        self._reset_tunnel()
-
-            else:
-                self.verbose_print('[!] No tunnel yet')
-                self._reset_tunnel()
-                sleep(.1)
+        logging.debug('[*] Stopped tun_listener')
 
 
     def _tun_sender(self):
 
-        while not self._stop:
-            packet = self.outgoing_queue.get()
-            self.proc_tun_outgoing(packet)            
+        while not self.STOP:
+            try:
+                packet = self.outgoing_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            self.proc_tun_outgoing(packet)
+
+        logging.debug('[*] Stopped tun_sender')
 
 
     def proc_net_incoming(self, packet):
@@ -172,10 +161,8 @@ class FunTunnel():
         # source and destination MAC addresses
         src,dst = packet[6:12],packet[:6]
 
-        if self.verbose:
-            s = ':'.join('{:02X}'.format(i) for i in src)
-            d = ':'.join('{:02X}'.format(i) for i in dst)
-            print('[*] {} -> {}'.format(s, d), end='', flush=True)
+        if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+            eth_summary = '[*] {} -> {}'.format(':'.join('{:02X}'.format(i) for i in src), ':'.join('{:02X}'.format(i) for i in dst))
 
         is_multicast = (dst[0] & 1) == 1 # least significant bit in most significant byte
 
@@ -183,17 +170,18 @@ class FunTunnel():
         # or if it's multicast/broadcast
         if (dst in self.mac_table) or (src not in self.mac_table and is_multicast):
 
-            self.verbose_print(' SENDING')
+            # print source and destination MAC
+            logging.info(eth_summary + ' (SENDING{}'.format((' to ' + self.tap) if self.tap else '') + ')')
 
             # send it across the tunnel
             try:
                 self.outgoing_queue.put(packet)
             except queue.Full:
-                self.verbose_print('[!] Outgoing queue is full. Dropping packet.')
+                logging.info('[!] Outgoing queue is full. Dropping packet.')
                 sleep(.1)
             
         else:
-            self.verbose_print('')
+            logging.debug(eth_summary)
 
 
     def proc_tun_incoming(self, packet):
@@ -212,10 +200,10 @@ class FunTunnel():
 
         # add source MAC to table
         if not src in self.mac_table:
-            self.verbose_print('[+] Adding new MAC {}'.format(':'.join('{:02X}'.format(i) for i in src)))
+            logging.info('[+] Adding new MAC {}'.format(':'.join('{:02X}'.format(i) for i in src)))
             self.mac_table.append(src)
 
-        self.interface.write(packet)
+        self.bridge_ifc.write(packet)
 
 
     def proc_tun_outgoing(self, packet):
@@ -224,50 +212,160 @@ class FunTunnel():
         '''
 
         try:
-            if self.peer is not None:
-                with self.peer.makefile(mode='wb') as p:
-                    pickle.dump(packet, p)
+            with self.peer.makefile(mode='wb') as p:
+                pickle.dump(packet, p)
 
-        except BrokenPipeError:
-            self._reset_tunnel()
-
-
-    def verbose_print(self, *args, **kwargs):
-
-        if self.verbose:
-            print(*args, **kwargs, flush=True)
+        except Exception as e:
+            logging.info('[!] Error sending across tunnel:\n\t{}'.format(str(e)))
+            self.stop()
 
 
-    def err_print(self, *args):
-
-        sys.stderr.write('[!] {}\n'.format(' '.join([*args])))
-        sys.stderr.flush()
 
 
-    def _reset_tunnel(self):
+class Client():
 
-        self.peer           = None
-        self.mac_table      = []
+    def __init__(self, interface, host, port=8080, use_ssl=True):
+
+        self.interface = interface
+        self.host = host
+        self.port = port
+        self.use_ssl = use_ssl
+        self.STOP = False
+
+        self.funtunnel = None
+
+
+    def start(self):
+
+        while not self.STOP:
+
+            self.reconnect()
+            self.funtunnel.start()
+            self.funtunnel.join()
+
+            logging.info('[!] Problem with tunnel - reconnecting')
+            self.reconnect()
+
+
+    def stop(self):
+
+        logging.debug('[*] Stopping Client')
+
+        self.STOP = True
+        try:
+            self.funtunnel.stop()
+            self.funtunnel.join()
+        except:
+            pass
+
+        logging.debug('[*] Client stopped')
+
+
+    def reconnect(self):
 
         try:
+            self.funtunnel.stop()
+        except:
+            pass
 
-            if self.client_mode:
-                self.verbose_print('[+] Starting tunnel in client mode')
-                self._tunnel.connect((self.host, self.port))
-                self.peer = self._tunnel
+        try:
+            tcp_session = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # plaintext tunnel socket
+            tcp_session.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+            if self.use_ssl:
+                self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+                self.peer = self.ssl_context.wrap_socket(tcp_session, server_hostname='FunTunnel') 
             else:
-                self.peer,address = self._tunnel.accept()
-                print('\n[+] Connection from {}\n'.format(address[0]))
+                self.peer = tcp_session
 
-        except (OSError,ValueError) as e:
-            self._stop = True
-            self.err_print('Error setting up tunnel:\n{}'.format(str(e)))
+            logging.info('[+] Starting tunnel in client mode')
+            self.peer.connect((self.host, self.port))
+
+        except (OSError,ValueError,ConnectionRefusedError) as e:
+            logging.critical('[!] Error setting up tunnel:\n\t{}'.format(str(e)))
+            self.stop()
+
+        self.funtunnel = FunTunnel(self.peer, self.interface, create_ifc=False)
+
+
+
+class Server():
+
+    def __init__(self, interface, bind='0.0.0.0', port=8080, use_ssl=True):
+
+        self._tcp_session   = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # plaintext tunnel socket
+        self._tcp_session.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # enable socket reuse
+        self.bridge_ifc     = interface
+
+        self.bind           = bind
+        self.port           = port
+
+        if use_ssl:
+
+            with NamedTemporaryFile(mode='wb') as f:
+                f.write(b64decode(ssl_cert))
+                f.flush()
+
+                self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                self.ssl_context.load_cert_chain(certfile=f.name)
+                self.socket      = self.ssl_context.wrap_socket(self._tcp_session, server_side=True)
+
+        else:
+            self.socket = self._tcp_session
+
+        self.interface_num = 0
+        self.STOP = False
+
+        self.threads = []
+
+
+    def start(self):
+
+        #try:
+        
+        logging.info('[+] Starting tunnel in server mode\n[+] Listening on port {}'.format(self.port))
+        self.socket.bind(('0.0.0.0', self.port))
+        self.socket.listen(0)
+
+        while not self.STOP:
+            try:
+                peer,address = self.socket.accept()
+            except OSError:
+                logging.info('[!] Rejected malformed connection')
+                continue
+
+            logging.warning('\n[+] Connection from {}\n'.format(address[0]))
+
+            tap_ifc = 'fun{}'.format(str(self.interface_num))
+            t = FunTunnel(peer, tap_ifc, daemon=True)
+            t.start()
+            self.threads.append(t)
+            self.interface_num += 1
+
+        #except KeyboardInterrupt:
+        #    self.stop()
+
+
+    def stop(self):
+        
+        self.STOP = True
+
+        for t in self.threads:
+            try:
+                t.stop()
+            except:
+                pass
+
+        try:
+            self.socket.shutdown(socket.SHUT_RDWR)
+            self.peer.close()
+        except:
+            pass
 
 
 
 
 ### TAP DEVICE CLASS ###
-
 
 class TAPDevice:
 
@@ -301,7 +399,7 @@ class TAPDevice:
             file descriptor used to read/write to device.
         '''
 
-        TUNSETIFF       = 0x400454ca # ??
+        TUNSETIFF       = 0x400454ca # command to set TUN interface options
         IFF_TAP         = 0x0002     # TAP interface
         IFF_NO_PI       = 0x1000     # don't return packet details
 
@@ -326,11 +424,24 @@ class TAPDevice:
             run(['ip', 'link', 'set', 'up', 'dev', self.name])
 
 
+    def down(self):
+
+        if os.name == 'posix':
+
+            run(['ip', 'link', 'del', 'dev', self.name])
+
+
+    def __str__(self):
+
+        return self.name
+
+
+
 
 
 ### SNIFFER CLASS ###
 
-# most of this code is shamelessly borrowed from zeigotaro's "python-sniffer"
+# code adapted from zeigotaro's "python-sniffer"
 # https://github.com/zeigotaro/python-sniffer/blob/master/snifferCore.py
 
 
@@ -350,7 +461,9 @@ class SniffDevice():
         s.stop()
     '''
 
-    def __init__(self, interface=None):
+    def __init__(self, interface):
+
+        assert interface, "Please specify interface"
 
         self.interface  = interface
         self.started    = False
@@ -455,6 +568,11 @@ class SniffDevice():
         self.started = False
 
 
+    def __str__(self):
+
+        return self.interface
+
+
 
 def get_interface():
     # TODO: handle M$
@@ -486,22 +604,29 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="im in ur network sniffin ur packetz")
 
-    parser.add_argument('host',                 nargs='?',      default='0.0.0.0',  help="connect to host (client mode) or bind to (server mode)")
-    parser.add_argument('-c', '--client',       action='store_true',                help="client mode (default: server)")
+    parser.add_argument('host',                 nargs='?',                          help="connect to host (client mode)")
     parser.add_argument('-i', '--interface',                    default=def_ifc,    help="interface to bridge (default: {})".format(def_ifc), metavar='')
     parser.add_argument('-p', '--port',         type=int,       default=8080,       help="port number on which to listen/connect (default: 8080)", metavar='')
-    parser.add_argument('-v', '--verbose',      action='store_true',                help="print what's happening")
+    parser.add_argument('-v', '--verbose',      action='store_true',                help="print detailed information")
 
     try:
 
         options = parser.parse_args()
+
+        if options.verbose:
+            logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='%(message)s')
+        else:
+            logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format='%(message)s')
+
         if os.name == 'posix':
             assert options.interface, "Please specify interface"
-        assert (not options.client) or (options.host != parser.get_default('host')), "Please specify host for client mode"
 
-        t = FunTunnel(interface=options.interface, host=options.host, port=options.port, client_mode=options.client, verbose=options.verbose)
-        t.start()
-
+        if options.host:
+            t = Client(options.interface, options.host)
+            t.start()
+        else:
+            t = Server(options.interface)
+            t.start()
 
     except argparse.ArgumentError:
         sys.stderr.write("\n[!] Check your syntax. Use -h for help.\n")
@@ -514,7 +639,9 @@ if __name__ == '__main__':
         exit(2)
 
     finally:
-        try:
-            t.stop()
-        except:
-            pass
+        t.stop()
+
+
+else:
+
+    logging.basicConfig(stream=sys.stdout, level=logging.WARNING)
