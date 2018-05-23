@@ -12,7 +12,7 @@
 <br>
 
 ### Please be aware:
-1. **This is a work in progress.** Traffic is obfuscated using an SSL self-signed cert, so it's possible for the data to be decrypted.
+1. Traffic is obfuscated using an SSL self-signed cert, so it's possible for the data to be decrypted.
 2. Requires root access on both server and client
 3. Tested in Linux only.  Bug reports and/or pull requests are welcome.
 4. Future developments may include:
