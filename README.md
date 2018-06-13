@@ -14,7 +14,7 @@
 ### Please be aware:
 1. Traffic is obfuscated using an SSL self-signed cert, so it's possible for the data to be decrypted.
 2. Requires root access on both server and client
-3. Tested in Linux only.  Bug reports and/or pull requests are welcome.
+3. Doesn't work on Windows. Tested on Linux.
 4. Future developments may include:
 	* Tunnelling over well-formed HTTP / WebSockets
 
