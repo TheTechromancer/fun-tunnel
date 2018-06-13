@@ -2,8 +2,10 @@
 
 '''
 TODO:
- - Windows support (needs third-party driver for L2 headers - possibly either TAP or PCAP)
-     - experiment with L2 NAT (change MAC table to ARP table, strip off L2 header client-side)
+ - Windows support? bleh
+    - Windows doesn't allow spoofing source IP, so yeah.
+        - https://msdn.microsoft.com/en-us/library/windows/desktop/ms740548(v=vs.85).aspx
+    - Even if it did, special drivers would be required to capture L2 headers (raw sockets deliver L3 headers only)
  - experiment with STUN (to circumvent NAT)
  - try tunneling using websockets
 '''
@@ -19,12 +21,11 @@ import logging
 import argparse
 import threading
 from time import sleep
+from fcntl import ioctl
 from base64 import b64decode
 from tempfile import NamedTemporaryFile
 from subprocess import run, PIPE, CalledProcessError
 
-if os.name == 'posix':
-    from fcntl import ioctl
 
 ssl_cert = 'LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBN0RRNEV6UGpqWm5JV1lsa0Npb25BMTBEeFdWOUlibk43bzNuRndBK2JlUXZkQzhsCnY5V0o1OVg0WXIrWFhwc0w5SWZXSUdCMVZHbGRUS2ZtSzUwTmVDNU5SUEQ4QUNTUmhQK0ZpL3E3dEswUXR4L1UKc1l6OG9TQStIUmVkNFJMaGNzK1IzMEc2ZTJySGVBaE8yYnZiVW9MOHozb1d4emRWZlRUOHlCZkw4OWpoU1VUZwpqemR3NGUyWlFBT0phbEdIZTJPUitYWk1EZEgxOHpLNktFSW4vM1o2RU9TeFBiQUI5NHUxYTF5eVlrMlRWbXBnCnRsT1NXV1BtcUJja2cwQU5raHFpYStxMGE1emx0VXdUZzZyRDRReGxPamZHQy9GVmtLUVJqTFVaM3BEUDFJM1YKT3BVYXcyUGVvYXRDZGk2ZWpoSVFjVk5lYmFGUEVpOGZLWnBoOVFJREFRQUJBb0lCQVFDc0c2eVVTV1hRUXJLYQpreUtpeVc0ZDVFT2dMTUFOdC81V2lXMU45QzZKRWhDRnZ1anBxK1hOV0xxZzhXdVJVclpXV2pmcTVYMzRvTUdMCjNuYzNaanR2UzRXZjYxd2ptb0d5QUNIR0NrK0ZhZWxaRmNkOEMvZjBTN01XcmFPcllYK0drYnAvaTd3ZXU0SlcKY3U5SmRibHNtT2N2SW8zQVlSQllxQ2hjZ0FKclRVRVZzUnlpWG5nZjZrQXFIWCtESFVlRzRQZXl4SnFaWVZ2UQpISE1JeHVGdG9pVHNpMHRkZ21vemJIS1E2eWpUSGpXMElDMnl3S1UyMEN0dm1ZaGxQRERJejV6WlJ5YlVzNEtYCk5qY3JKVXcxKzQ1c09pTlBLdCt3Y1FwTndIWWFxZzF0THk1YmsvM2FuMXJvN2ZFV3NnR1dvM3lOMmI5N2swYjgKR21QSEw3NkJBb0dCQVBkeDgrWHM5S0tJdzlRSWRmYmNMb0lXM1owSDJWZEtxOTlsNURoTm9vckh4c3U5ZW1aRwoxazJUVk1pUTVnTVdjQmVOQWVLM081TkxQQTlMT1FsaTJ4TWcwTkt1d05MbU80V3hVMW1QeHYwbGtWVU9LUlhNCkRGU2Nobm9WbXkzZVN6WC9aOEJqNDNVcVhWZ3VTcXoyMEMzSEpxSW9TZnpFdXNPUS8rajFITkFoQW9HQkFQUmUKeG1YRGpUMWhzTHlKSklXYTloTzR1QjhIUjhPRnQ5M1dGeWtMTmNBK05ua1NkMndWeDFzVVUvaUJqSUtycWlTWgpyamVkQWkxem0rWUNrWVVYZTBDNEJLYnVvN2ZObWRHUkQ3SWxMNjljMHY4RXNHdFAxNkVHQ2VHRVNQYjRCVVQyCmJuTnU4VExBdWpMdEVNcTlJRTVUQllLNWhKRjZPVzFYa01xMXpHZFZBb0dBU3RrOVhaOS9vR3FlVWRUOVdkN2cKY3BsWUQ5Zi85bGV3QmJOY2hXdDJiMlJlemVKUzAvMDVkZDNMRjZBODgxSW1OZm1CU0lNRWtsbC9vV0N2c0JjbgpEWEl2dUlzRDZNZWIyYVQ2QVcxc1U4YTVYM0VaSEc3TWpBdU00Z0VISDZqT04xYzZtd2VjRmlUcWQzSUpSS2lqCjhEVDlpcStGTWVDUVhmZk9jVGt6cmdFQ2dZQU42SDcrTjcwSUsxRTF5ZEJzVWorREs5WSszZGsxeFp5TFlhMzcKeGdtUElYdFVOTHJiU2ZvSXN3VjhkVk1iOU0xQVBBYndYMTFLWFBRWWlUampERTBWaCtPcjVKVW8xdWpVUnA5UQpFbEcrZDFnQzc2OWl6QzZIbWFKaVZYY1pwMUFWZHJrZWxNZmhqWnFMWDNhL016aHRmTWdwZ29tTEJodlNuMU04ClZsQ0Y2UUtCZ1FDb0VrYVJFNDdnQUozRjh4OWJDeGhva2NBOHFsbFJFcXVLYmNoUGxhcGdSMDkvWDI2Z0RyTEMKenpMU0lOYjArajVtYVZjazhZZWNPbDk2VnNEWU9ySGFaMkhWV01JazQzQUZldjl2Nzk5clRiYlZ4U0RsbnNIZwozZGdSTEs3em9tMm9LcGZiQklvMTRQZ0lKVGswV2dmWDdydU5UL2lUalhzVkl3QVBrUGY1K3c9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQotLS0tLUJFR0lOIENFUlRJRklDQVRFLS0tLS0KTUlJRE1EQ0NBaGdDQ1FDeUZ6UkMwNFZyNGpBTkJna3Foa2lHOXcwQkFRc0ZBREJaTVFzd0NRWURWUVFHRXdKRwpWREVUTUJFR0ExVUVDQXdLVTI5dFpTMVRkR0YwWlRFaE1COEdBMVVFQ2d3WVNXNTBaWEp1WlhRZ1YybGtaMmwwCmN5QlFkSGtnVEhSa01SSXdFQVlEVlFRRERBbEdkVzVVZFc1dVpXd3dJQmNOTVRnd05URTFNRE15TkRBNFdoZ1AKTkRjMU5qQTBNVEF3TXpJME1EaGFNRmt4Q3pBSkJnTlZCQVlUQWtaVU1STXdFUVlEVlFRSURBcFRiMjFsTFZOMApZWFJsTVNFd0h3WURWUVFLREJoSmJuUmxjbTVsZENCWGFXUm5hWFJ6SUZCMGVTQk1kR1F4RWpBUUJnTlZCQU1NCkNVWjFibFIxYm01bGJEQ0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQU93ME9CTXoKNDQyWnlGbUpaQW9xSndOZEE4VmxmU0c1emU2TjV4Y0FQbTNrTDNRdkpiL1ZpZWZWK0dLL2wxNmJDL1NIMWlCZwpkVlJwWFV5bjVpdWREWGd1VFVUdy9BQWtrWVQvaFl2NnU3U3RFTGNmMUxHTS9LRWdQaDBYbmVFUzRYTFBrZDlCCnVudHF4M2dJVHRtNzIxS0MvTTk2RnNjM1ZYMDAvTWdYeS9QWTRVbEU0STgzY09IdG1VQURpV3BSaDN0amtmbDIKVEEzUjlmTXl1aWhDSi85MmVoRGtzVDJ3QWZlTHRXdGNzbUpOazFacVlMWlRrbGxqNXFnWEpJTkFEWklhb212cQp0R3VjNWJWTUU0T3F3K0VNWlRvM3hndnhWWkNrRVl5MUdkNlF6OVNOMVRxVkdzTmozcUdyUW5ZdW5vNFNFSEZUClhtMmhUeEl2SHltYVlmVUNBd0VBQVRBTkJna3Foa2lHOXcwQkFRc0ZBQU9DQVFFQUFZc2paekNRbURQMTdOUC8KeEZROW9Va05KejZJS2V3S0U4Y1FMRTlBcGt1ZlRWQVhhRkEyVXFGN0wwVnpVUmhNS1JBMVBVODE3NUp0b3VSbApJeURJSVZVSFpOc25tZGhCKzJhNVV2cFpxZEZkNG8yR2JBRkhZd0dTbmhicmRHL3l1Rm1IZXFRcVVtaitOZFkwCkd6S1dYYlBPRHdGQVhYZk1pcW1Zb2FTN1VkZXlHNklKdFlRbitjanVWYXhQcEhyWXQxUGpZb1QvemFaWmFHVnkKOE9tSTc3c2RCWDZTclRlZWora0h1eTg1bzlCL044WDVkTHdhcDJNS0ozZEE3NG1jM1o5QlA3N0I0Y0dCQ1VFQgprbmV3Y1FwUmNncjF6VUloZ1BmRHE2NkkxQTFUZmJMZjBLVEEzazhYZXZwd1pCUjNqbWJmcEhCamFrQzdzUll1CkI0a2tUUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K'
 
@@ -414,21 +415,17 @@ class TAPDevice:
         Assign IP address to TAP device
         '''
 
-        if os.name == 'posix':
+        # if we want to have an IP
+        if self.addr:
+            # assign it to the interface
+            run(['ip', 'addr', 'add', '{}/24'.format(self.addr), 'dev', self.name])
 
-            # if we want to have an IP
-            if self.addr:
-                # assign it to the interface
-                run(['ip', 'addr', 'add', '{}/24'.format(self.addr), 'dev', self.name])
-
-            run(['ip', 'link', 'set', 'up', 'dev', self.name])
+        run(['ip', 'link', 'set', 'up', 'dev', self.name])
 
 
     def down(self):
 
-        if os.name == 'posix':
-
-            run(['ip', 'link', 'del', 'dev', self.name])
+        run(['ip', 'link', 'del', 'dev', self.name])
 
 
     def __str__(self):
@@ -456,28 +453,20 @@ class SniffDevice():
     or
 
         s = SniffDevice(interface)
-        s.start()
+        s.up()
         s.socket.recv(65536)
-        s.stop()
+        s.down()
     '''
 
-    def __init__(self, interface):
-
-        assert interface, "Please specify interface"
+    def __init__(self, interface=None):
 
         self.interface  = interface
         self.started    = False
 
-        if os.name == 'posix':
-            assert interface, "Please specify interface"
+        assert interface, "Please specify interface"
 
-            # htons: converts 16-bit positive integers from host to network byte order
-            self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
-
-        else:
-            # create a raw socket and bind it to the public interface
-            #self.socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
+        # htons: converts 16-bit positive integers from host to network byte order
+        self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(FLAGS.ETH_P_ALL))
 
 
     def up(self):
@@ -487,41 +476,22 @@ class SniffDevice():
             # prevent socket from being left in TIME_WAIT state, enabling reuse
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-            if os.name == 'posix':
-
-                self.socket.bind((self.interface, 0))
-                
-                # enable promiscuous mode
-                ifc = self.interface.encode('ascii')
-                ifr = bytearray(struct.pack('16sH', ifc, 0)) # create the struct
-                ioctl(self.socket, FLAGS.SIOCGIFFLAGS, ifr) # get the flags
-                ifr = bytearray(struct.pack('16sH', ifc, struct.unpack('16sH', ifr)[1] | FLAGS.IFF_PROMISC)) # add the promiscuous flag
-                ioctl(self.socket, FLAGS.SIOCSIFFLAGS, ifr) # update
-                self.ifr = ifr
-
-            else:
-                # the public network interface
-                HOST = socket.gethostbyname(socket.gethostname())
-
-                self.socket.bind((HOST, 0))
-                #self.socket.bind((HOST, 0))
-
-                # include IP headers
-                self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
-
-                # enable promiscuous mode
-                self.socket.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
+            self.socket.bind((self.interface, 0))
+            
+            # enable promiscuous mode
+            ifc = self.interface.encode('ascii')
+            ifr = bytearray(struct.pack('16sH', ifc, 0)) # create the struct
+            ioctl(self.socket, FLAGS.SIOCGIFFLAGS, ifr) # get the flags
+            ifr = bytearray(struct.pack('16sH', ifc, struct.unpack('16sH', ifr)[1] | FLAGS.IFF_PROMISC)) # add the promiscuous flag
+            ioctl(self.socket, FLAGS.SIOCSIFFLAGS, ifr) # update
+            self.ifr = ifr
 
             self.started = True
 
 
     def read(self, buf_size=65536):
 
-        if os.name == 'posix':
-            return self.socket.recv(buf_size)
-        else:
-            #return self.socket.recvfrom(buf)[0]
-            return self.socket.recv(buf_size)
+        return self.socket.recv(buf_size)
 
 
     def write(self, data):
@@ -556,13 +526,9 @@ class SniffDevice():
         '''
 
         # disable promiscuous mode
-        if os.name == 'posix':
-            ifc,flags = struct.unpack('16sH', self.ifr) ^ FLAGS.IFF_PROMISC # mask it off (remove)
-            self.ifr = bytearray(struct.pack('16sH', ifc, flags))
-            ioctl(self.socket, FLAGS.SIOCSIFFLAGS, self.ifr) # update
-
-        else:
-            self.socket.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
+        ifc,flags = struct.unpack('16sH', self.ifr) ^ FLAGS.IFF_PROMISC # mask it off (remove)
+        self.ifr = bytearray(struct.pack('16sH', ifc, flags))
+        ioctl(self.socket, FLAGS.SIOCSIFFLAGS, self.ifr) # update
 
         self.socket.close()
         self.started = False
@@ -575,22 +541,18 @@ class SniffDevice():
 
 
 def get_interface():
-    # TODO: handle M$
 
-    # handle Linux
-    if os.name == 'posix':
+    # try interface with default route first
+    routes = run(['ip', '-o', 'route'], stdout=PIPE).stdout.split(b'\n')
+    for route in routes:
+        if route.startswith(b'default via'):
+            return route.split()[4].decode('utf-8')
 
-        # try interface with default route first
-        routes = run(['ip', '-o', 'route'], stdout=PIPE).stdout.split(b'\n')
-        for route in routes:
-            if route.startswith(b'default via'):
-                return route.split()[4].decode('utf-8')
-
-        # if unsuccessful, just get first interface in line (excluding loopback)
-        interfaces = [i.split() for i in run(['ip', '-o', 'link'], stdout=PIPE).stdout.split(b'\n')]
-        for line in interfaces:
-            if not line[1] == b'lo:':
-                return line[1].split(b':')[0].decode('utf-8')
+    # if unsuccessful, just get first interface in line (excluding loopback)
+    interfaces = [i.split() for i in run(['ip', '-o', 'link'], stdout=PIPE).stdout.split(b'\n')]
+    for line in interfaces:
+        if not line[1] == b'lo:':
+            return line[1].split(b':')[0].decode('utf-8')
 
     return None
 
@@ -606,7 +568,8 @@ if __name__ == '__main__':
 
     parser.add_argument('host',                 nargs='?',                          help="connect to host (client mode)")
     parser.add_argument('-i', '--interface',                    default=def_ifc,    help="interface to bridge (default: {})".format(def_ifc), metavar='')
-    parser.add_argument('-p', '--port',         type=int,       default=8080,       help="port number on which to listen/connect (default: 8080)", metavar='')
+    parser.add_argument('-p', '--port',         type=int,       default=443,        help="port number on which to listen/connect (default: 443)", metavar='')
+    parser.add_argument('-t', '--test',         action='store_true')
     parser.add_argument('-v', '--verbose',      action='store_true',                help="print detailed information")
 
     try:
@@ -618,8 +581,7 @@ if __name__ == '__main__':
         else:
             logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format='%(message)s')
 
-        if os.name == 'posix':
-            assert options.interface, "Please specify interface"
+        assert options.interface, "Please specify interface"
 
         if options.host:
             t = Client(options.interface, options.host)
@@ -639,8 +601,10 @@ if __name__ == '__main__':
         exit(2)
 
     finally:
-        t.stop()
-
+        try:
+            t.stop()
+        except:
+            pass
 
 else:
 
