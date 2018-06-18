@@ -225,7 +225,7 @@ class FunTunnel(threading.Thread):
 
 class Client():
 
-    def __init__(self, interface, host, port=8080, use_ssl=True):
+    def __init__(self, interface, host, port=443, use_ssl=True):
 
         self.interface = interface
         self.host = host
@@ -292,7 +292,7 @@ class Client():
 
 class Server():
 
-    def __init__(self, interface, bind='0.0.0.0', port=8080, use_ssl=True):
+    def __init__(self, interface, bind='0.0.0.0', port=443, use_ssl=True):
 
         self._tcp_session   = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # plaintext tunnel socket
         self._tcp_session.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # enable socket reuse
@@ -584,10 +584,10 @@ if __name__ == '__main__':
         assert options.interface, "Please specify interface"
 
         if options.host:
-            t = Client(options.interface, options.host)
+            t = Client(options.interface, options.host, port=options.ports)
             t.start()
         else:
-            t = Server(options.interface)
+            t = Server(options.interface, port=options.port)
             t.start()
 
     except argparse.ArgumentError:
