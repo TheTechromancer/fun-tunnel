@@ -584,7 +584,7 @@ if __name__ == '__main__':
         assert options.interface, "Please specify interface"
 
         if options.host:
-            t = Client(options.interface, options.host, port=options.ports)
+            t = Client(options.interface, options.host, port=options.port)
             t.start()
         else:
             t = Server(options.interface, port=options.port)
